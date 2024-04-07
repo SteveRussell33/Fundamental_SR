@@ -110,7 +110,7 @@ struct Unity : Module {
 struct UnityWidget : ModuleWidget {
 	UnityWidget(Unity* module) {
 		setModule(module);
-		setPanel(createPanel(asset::plugin(pluginInstance, "res/Unity.svg"), asset::plugin(pluginInstance, "res/Unity-dark.svg")));
+		setPanel(createPanel(asset::plugin(pluginInstance, "res/Unity.svg")));
 
 		addChild(createWidget<ThemedScrew>(Vec(15, 0)));
 		addChild(createWidget<ThemedScrew>(Vec(box.size.x - 30, 0)));
