@@ -18,12 +18,15 @@ struct Rescale : Module {
 		OUTPUTS_LEN
 	};
 	enum LightId {
+		ENUMS(MAX_LIGHT, 2),
+		ENUMS(MIN_LIGHT, 2),
 		LIGHTS_LEN
 	};
 
 	float multiplier = 1.f;
 	bool reflectMin = false;
 	bool reflectMax = false;
+	dsp::ClockDivider lightDivider;
 
 	Rescale() {
 		config(PARAMS_LEN, INPUTS_LEN, OUTPUTS_LEN, LIGHTS_LEN);
@@ -49,6 +52,8 @@ struct Rescale : Module {
 		configInput(IN_INPUT, "Signal");
 		configOutput(OUT_OUTPUT, "Signal");
 		configBypass(IN_INPUT, OUT_OUTPUT);
+
+		lightDivider.setDivision(16);
 	}
 
 	void onReset(const ResetEvent& e) override {
@@ -68,9 +73,24 @@ struct Rescale : Module {
 		float min = params[MIN_PARAM].getValue();
 		float max = params[MAX_PARAM].getValue();
 
+		bool maxLight = false;
+		bool minLight = false;
+		bool lightProcess = lightDivider.process();
+
 		for (int c = 0; c < channels; c += 4) {
-			float_4 x = inputs[IN_INPUT].getPolyVoltageSimd<float_4>(c);
-			x = x * gain + offset;
+			float_4 x = inputs[IN_INPUT].getVoltageSimd<float_4>(c);
+			x *= gain;
+			x += offset;
+
+			// Check lights
+			if (lightProcess) {
+				// Mask result for non factor of 4 channels.
+				int mask = 0xffff >> (16 - channels + c);
+				if (simd::movemask(x <= min) & mask)
+					minLight = true;
+				if (simd::movemask(x >= max) & mask)
+					maxLight = true;
+			}
 
 			if (max <= min) {
 				x = min;
@@ -100,6 +120,15 @@ struct Rescale : Module {
 		}
 
 		outputs[OUT_OUTPUT].setChannels(channels);
+
+		// Lights
+		if (lightProcess) {
+			float lightTime = args.sampleTime * lightDivider.getDivision();
+			lights[MAX_LIGHT + 0].setBrightnessSmooth(maxLight && (channels <= 1), lightTime);
+			lights[MAX_LIGHT + 1].setBrightnessSmooth(maxLight && (channels > 1), lightTime);
+			lights[MIN_LIGHT + 0].setBrightnessSmooth(minLight && (channels <= 1), lightTime);
+			lights[MIN_LIGHT + 1].setBrightnessSmooth(minLight && (channels > 1), lightTime);
+		}
 	}
 
 	json_t* dataToJson() override {
@@ -144,6 +173,9 @@ struct RescaleWidget : ModuleWidget {
 		addInput(createInputCentered<ThemedPJ301MPort>(mm2px(Vec(7.62, 96.859)), module, Rescale::IN_INPUT));
 
 		addOutput(createOutputCentered<ThemedPJ301MPort>(mm2px(Vec(7.62, 113.115)), module, Rescale::OUT_OUTPUT));
+
+		addChild(createLightCentered<TinyLight<YellowBlueLight<>>>(mm2px(Vec(12.327, 57.3)), module, Rescale::MAX_LIGHT));
+		addChild(createLightCentered<TinyLight<YellowBlueLight<>>>(mm2px(Vec(12.327, 73.559)), module, Rescale::MIN_LIGHT));
 	}
 
 	void appendContextMenu(Menu* menu) override {
