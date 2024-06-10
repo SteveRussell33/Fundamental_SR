@@ -108,9 +108,9 @@ struct VCF : Module {
 		configParam(RES_CV_PARAM, -1.f, 1.f, 0.f, "Resonance CV", "%", 0.f, 100.f);
 		configParam(FREQ_CV_PARAM, -1.f, 1.f, 0.f, "Cutoff frequency CV", "%", 0.f, 100.f);
 		// gain(drive) = (1 + drive)^5
-		// gain(0) = 1
 		// gain(-1) = 0
-		// gain(1) = 5
+		// gain(0) = 1
+		// gain(1) = 32
 		configParam(DRIVE_PARAM, -1.f, 1.f, 0.f, "Drive", "%", 0, 100, 100);
 		configParam(DRIVE_CV_PARAM, -1.f, 1.f, 0.f, "Drive CV", "%", 0, 100);
 
