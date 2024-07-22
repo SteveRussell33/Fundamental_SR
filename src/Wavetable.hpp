@@ -100,7 +100,11 @@ struct Wavetable {
 	void interpolate() {
 		if (quality == 0)
 			return;
-		if (waveLen < 2)
+		// pffft only supports >=32 points
+		if (waveLen < 32)
+			return;
+		// pffft only supports multiples of 32 points
+		if ((waveLen % 32) != 0)
 			return;
 
 		size_t waveCount = getWaveCount();
@@ -302,7 +306,7 @@ struct Wavetable {
 			[=]() {saveDialog();}
 		));
 
-		int sizeOffset = 4;
+		int sizeOffset = 5;
 		std::vector<std::string> sizeLabels;
 		for (int i = sizeOffset; i <= 14; i++) {
 			sizeLabels.push_back(string::f("%d", 1 << i));
