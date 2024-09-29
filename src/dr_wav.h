@@ -1,6 +1,6 @@
 /*
 WAV audio loader and writer. Choice of public domain or MIT-0. See license statements at the end of this file.
-dr_wav - v0.13.2 - 2021-10-02
+dr_wav - v0.13.17 - TBD
 
 David Reid - mackron@gmail.com
 
@@ -79,7 +79,9 @@ dr_wav can also be used to output WAV files. This does not currently support com
     drwav_uint64 framesWritten = drwav_write_pcm_frames(pWav, frameCount, pSamples);
     ```
 
-dr_wav has seamless support the Sony Wave64 format. The decoder will automatically detect it and it should Just Work without any manual intervention.
+Note that writing to AIFF or RIFX is not supported.
+
+dr_wav has support for decoding from a number of different encapsulation formats. See below for details.
 
 
 Build Options
@@ -92,24 +94,44 @@ Build Options
 #define DR_WAV_NO_STDIO
   Disables APIs that initialize a decoder from a file such as `drwav_init_file()`, `drwav_init_file_write()`, etc.
 
+#define DR_WAV_NO_WCHAR
+  Disables all functions ending with `_w`. Use this if your compiler does not provide wchar.h. Not required if DR_WAV_NO_STDIO is also defined.
+
+
+Supported Encapsulations
+========================
+- RIFF (Regular WAV)
+- RIFX (Big-Endian)
+- AIFF (Does not currently support ADPCM)
+- RF64
+- W64
+
+Note that AIFF and RIFX do not support write mode, nor do they support reading of metadata.
+
+
+Supported Encodings
+===================
+- Unsigned 8-bit PCM
+- Signed 12-bit PCM
+- Signed 16-bit PCM
+- Signed 24-bit PCM
+- Signed 32-bit PCM
+- IEEE 32-bit floating point
+- IEEE 64-bit floating point
+- A-law and u-law
+- Microsoft ADPCM
+- IMA ADPCM (DVI, format code 0x11)
+
+8-bit PCM encodings are always assumed to be unsigned. Signed 8-bit encoding can only be read with `drwav_read_raw()`.
+
+Note that ADPCM is not currently supported with AIFF. Contributions welcome.
 
 
 Notes
 =====
 - Samples are always interleaved.
 - The default read function does not do any data conversion. Use `drwav_read_pcm_frames_f32()`, `drwav_read_pcm_frames_s32()` and `drwav_read_pcm_frames_s16()`
-  to read and convert audio data to 32-bit floating point, signed 32-bit integer and signed 16-bit integer samples respectively. Tested and supported internal
-  formats include the following:
-  - Unsigned 8-bit PCM
-  - Signed 12-bit PCM
-  - Signed 16-bit PCM
-  - Signed 24-bit PCM
-  - Signed 32-bit PCM
-  - IEEE 32-bit floating point
-  - IEEE 64-bit floating point
-  - A-law and u-law
-  - Microsoft ADPCM
-  - IMA ADPCM (DVI, format code 0x11)
+  to read and convert audio data to 32-bit floating point, signed 32-bit integer and signed 16-bit integer samples respectively.
 - dr_wav will try to read the WAV file as best it can, even if it's not strictly conformant to the WAV format.
 */
 
@@ -125,12 +147,12 @@ extern "C" {
 
 #define DRWAV_VERSION_MAJOR     0
 #define DRWAV_VERSION_MINOR     13
-#define DRWAV_VERSION_REVISION  2
+#define DRWAV_VERSION_REVISION  17
 #define DRWAV_VERSION_STRING    DRWAV_XSTRINGIFY(DRWAV_VERSION_MAJOR) "." DRWAV_XSTRINGIFY(DRWAV_VERSION_MINOR) "." DRWAV_XSTRINGIFY(DRWAV_VERSION_REVISION)
 
 #include <stddef.h> /* For size_t. */
 
-/* Sized types. */
+/* Sized Types */
 typedef   signed char           drwav_int8;
 typedef unsigned char           drwav_uint8;
 typedef   signed short          drwav_int16;
@@ -163,7 +185,9 @@ typedef drwav_uint8             drwav_bool8;
 typedef drwav_uint32            drwav_bool32;
 #define DRWAV_TRUE              1
 #define DRWAV_FALSE             0
+/* End Sized Types */
 
+/* Decorations */
 #if !defined(DRWAV_API)
     #if defined(DRWAV_DLL)
         #if defined(_WIN32)
@@ -193,7 +217,9 @@ typedef drwav_uint32            drwav_bool32;
         #define DRWAV_PRIVATE static
     #endif
 #endif
+/* End Decorations */
 
+/* Result Codes */
 typedef drwav_int32 drwav_result;
 #define DRWAV_SUCCESS                        0
 #define DRWAV_ERROR                         -1   /* A generic error. */
@@ -249,6 +275,7 @@ typedef drwav_int32 drwav_result;
 #define DRWAV_CANCELLED                     -51
 #define DRWAV_MEMORY_ALREADY_MAPPED         -52
 #define DRWAV_AT_END                        -53
+/* End Result Codes */
 
 /* Common data formats. */
 #define DR_WAVE_FORMAT_PCM          0x1
@@ -261,9 +288,20 @@ typedef drwav_int32 drwav_result;
 
 /* Flags to pass into drwav_init_ex(), etc. */
 #define DRWAV_SEQUENTIAL            0x00000001
+#define DRWAV_WITH_METADATA         0x00000002
 
 DRWAV_API void drwav_version(drwav_uint32* pMajor, drwav_uint32* pMinor, drwav_uint32* pRevision);
 DRWAV_API const char* drwav_version_string(void);
+
+/* Allocation Callbacks */
+typedef struct
+{
+    void* pUserData;
+    void* (* onMalloc)(size_t sz, void* pUserData);
+    void* (* onRealloc)(void* p, size_t sz, void* pUserData);
+    void  (* onFree)(void* p, void* pUserData);
+} drwav_allocation_callbacks;
+/* End Allocation Callbacks */
 
 typedef enum
 {
@@ -274,8 +312,10 @@ typedef enum
 typedef enum
 {
     drwav_container_riff,
+    drwav_container_rifx,
     drwav_container_w64,
-    drwav_container_rf64
+    drwav_container_rf64,
+    drwav_container_aiff
 } drwav_container;
 
 typedef struct
@@ -406,13 +446,6 @@ The read pointer will be sitting on the first byte after the chunk's header. You
 */
 typedef drwav_uint64 (* drwav_chunk_proc)(void* pChunkUserData, drwav_read_proc onRead, drwav_seek_proc onSeek, void* pReadSeekUserData, const drwav_chunk_header* pChunkHeader, drwav_container container, const drwav_fmt* pFMT);
 
-typedef struct
-{
-    void* pUserData;
-    void* (* onMalloc)(size_t sz, void* pUserData);
-    void* (* onRealloc)(void* p, size_t sz, void* pUserData);
-    void  (* onFree)(void* p, void* pUserData);
-} drwav_allocation_callbacks;
 
 /* Structure for internal use. Only used for loaders opened with drwav_init_memory(). */
 typedef struct
@@ -866,9 +899,6 @@ typedef struct
     drwav_bool32 isSequentialWrite;
 
 
-    /* A bit-field of drwav_metadata_type values, only bits set in this variable are parsed and saved */
-    drwav_metadata_type allowedMetadataTypes;
-
     /* A array of metadata. This is valid after the *init_with_metadata call returns. It will be valid until drwav_uninit() is called. You can take ownership of this data with drwav_take_ownership_of_metadata(). */
     drwav_metadata* pMetadata;
     drwav_uint32 metadataCount;
@@ -899,6 +929,13 @@ typedef struct
         drwav_int32  cachedFrames[16]; /* Samples are stored in this cache during decoding. */
         drwav_uint32 cachedFrameCount;
     } ima;
+
+    /* AIFF specific data. */
+    struct
+    {
+        drwav_bool8 isLE;   /* Will be set to true if the audio data is little-endian encoded. */
+        drwav_bool8 isUnsigned; /* Only used for 8-bit samples. When set to true, will be treated as unsigned. */
+    } aiff;
 } drwav;
 
 
@@ -1284,3 +1321,4 @@ DRWAV_API drwav_bool32 drwav_fourcc_equal(const drwav_uint8* a, const char* b);
 }
 #endif
 #endif  /* dr_wav_h */
+
