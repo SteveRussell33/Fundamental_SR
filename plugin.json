@@ -169,7 +169,7 @@
     {
       "slug": "Scope",
       "name": "Scope",
-      "description": "Inspect waveforms with an oscilloscope",
+      "description": "Inspect waveforms with an oscilloscope (SR mod)",
       "manualUrl": "https://vcvrack.com/Free#Scope",
       "tags": [
         "Visual",

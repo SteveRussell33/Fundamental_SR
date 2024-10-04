@@ -386,31 +386,43 @@ struct ScopeDisplay : LedDisplay {
 		nvgResetScissor(args.vg);
 	}
 
-	void drawStats(const DrawArgs& args, Vec pos, const char* title, const Stats& stats) {
+	void drawStats(const DrawArgs& args, Vec pos, const char* title, const Stats& stats, const NVGcolor& color) {
 		std::shared_ptr<Font> font = APP->window->loadFont(fontPath);
-		if (!font)
-			return;
+		if (!font) return;
+
 		nvgFontSize(args.vg, 13);
 		nvgFontFaceId(args.vg, font->handle);
 		nvgTextLetterSpacing(args.vg, -1);
 
-		nvgFillColor(args.vg, nvgRGBA(0xff, 0xff, 0xff, 0x40));
-		nvgText(args.vg, pos.x + 6, pos.y + 11, title, NULL);
+		// Port title
+		nvgFillColor(args.vg, color);
+		nvgText(args.vg, pos.x + 5, pos.y + 11, title, NULL);
+
+		// Construct and colour stat strings
+		pos = pos.plus(Vec(18, 11));
+		std::string text;
 
 		nvgFillColor(args.vg, nvgRGBA(0xff, 0xff, 0xff, 0x80));
-		pos = pos.plus(Vec(20, 11));
-
-		std::string text;
-		text = "pp ";
+		text = "PP";
 		float pp = stats.max - stats.min;
-		text += isNear(pp, 0.f, 100.f) ? string::f("% 6.2f", pp) : "  ---";
 		nvgText(args.vg, pos.x, pos.y, text.c_str(), NULL);
-		text = "max";
-		text += isNear(stats.max, 0.f, 100.f) ? string::f("% 6.2f", stats.max) : "  ---";
-		nvgText(args.vg, pos.x + 60 * 1, pos.y, text.c_str(), NULL);
-		text = "min";
-		text += isNear(stats.min, 0.f, 100.f) ? string::f("% 6.2f", stats.min) : "  ---";
-		nvgText(args.vg, pos.x + 60 * 2, pos.y, text.c_str(), NULL);
+		nvgFillColor(args.vg, color);		
+		text = isNear(pp, 0.f, 100.f) ? string::f("% 6.2f", pp) : "  ----";
+		nvgText(args.vg, pos.x + 10, pos.y, text.c_str(), NULL);
+
+		nvgFillColor(args.vg, nvgRGBA(0xff, 0xff, 0xff, 0x80));
+		text = "Max";
+		nvgText(args.vg, pos.x + 53, pos.y, text.c_str(), NULL);
+		nvgFillColor(args.vg, color); 		
+		text = isNear(stats.max, 0.f, 100.f) ? string::f("% 6.2f", stats.max) : " ----";	
+		nvgText(args.vg, pos.x + 72, pos.y, text.c_str(), NULL);
+		
+		nvgFillColor(args.vg, nvgRGBA(0xff, 0xff, 0xff, 0x80));
+		text = "Min";
+		nvgText(args.vg, pos.x + 114, pos.y, text.c_str(), NULL);
+		nvgFillColor(args.vg, color);		
+		text = isNear(stats.min, 0.f, 100.f) ? string::f("% 6.2f", stats.min) : " ----";
+		nvgText(args.vg, pos.x + 133, pos.y, text.c_str(), NULL);
 	}
 
 	void drawBackground(const DrawArgs& args) {
@@ -432,8 +444,7 @@ struct ScopeDisplay : LedDisplay {
 	}
 
 	void drawLayer(const DrawArgs& args, int layer) override {
-		if (layer != 1)
-			return;
+		if (layer != 1) return;
 
 		// Background lines
 		drawBackground(args);
@@ -446,16 +457,16 @@ struct ScopeDisplay : LedDisplay {
 		float offsetY = module ? module->params[Scope::Y_POS_PARAM].getValue() : -5.f;
 
 		// Get input colors
-		PortWidget* inputX = moduleWidget->getInput(Scope::X_INPUT);
-		PortWidget* inputY = moduleWidget->getInput(Scope::Y_INPUT);
-		CableWidget* inputXCable = APP->scene->rack->getTopCable(inputX);
-		CableWidget* inputYCable = APP->scene->rack->getTopCable(inputY);
-		NVGcolor inputXColor = inputXCable ? inputXCable->color : SCHEME_YELLOW;
-		NVGcolor inputYColor = inputYCable ? inputYCable->color : SCHEME_YELLOW;
+		PortWidget* inPort = moduleWidget->getInput(Scope::X_INPUT);
+		CableWidget* inCable = APP->scene->rack->getTopCable(inPort);
+		NVGcolor inputXColor = inCable ? inCable->color : SCHEME_YELLOW;
+		inPort = moduleWidget->getInput(Scope::Y_INPUT);
+		inCable = APP->scene->rack->getTopCable(inPort);
+		NVGcolor inputYColor = inCable ? inCable->color : SCHEME_YELLOW;
 
 		// Draw waveforms
-		int channelsY = module ? module->channelsY : 1;
 		int channelsX = module ? module->channelsX : 1;
+		int channelsY = module ? module->channelsY : 1;
 		if (module && module->isLissajous()) {
 			// X x Y
 			int lissajousChannels = std::min(channelsX, channelsY);
@@ -465,16 +476,16 @@ struct ScopeDisplay : LedDisplay {
 			}
 		}
 		else {
-			// Y
-			for (int c = 0; c < channelsY; c++) {
-				nvgFillColor(args.vg, inputYColor);
-				drawWave(args, 1, c, offsetY, gainY);
-			}
-
 			// X
 			for (int c = 0; c < channelsX; c++) {
 				nvgFillColor(args.vg, inputXColor);
 				drawWave(args, 0, c, offsetX, gainX);
+			}
+			
+			// Y
+			for (int c = 0; c < channelsY; c++) {
+				nvgFillColor(args.vg, inputYColor);
+				drawWave(args, 1, c, offsetY, gainY);
 			}
 
 			// Trigger
@@ -490,8 +501,8 @@ struct ScopeDisplay : LedDisplay {
 		}
 		statsFrame = (statsFrame + 1) % 4;
 
-		drawStats(args, Vec(0, 0 + 1), "1", statsX);
-		drawStats(args, Vec(0, box.size.y - 15 - 1), "2", statsY);
+		drawStats(args, Vec(0, 1), "1", statsX, inputXColor);
+		drawStats(args, Vec(0, box.size.y - 16), "2", statsY, inputYColor);
 	}
 };
 
