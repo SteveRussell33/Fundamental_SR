@@ -13,6 +13,7 @@ struct Scope : Module {
 		Y_POS_PARAM,
 		TIME_PARAM,
 		LISSAJOUS_PARAM,
+		LISSAJOUS_BLEND_PARAM,
 		THRESH_PARAM,
 		TRIG_PARAM,
 		NUM_PARAMS
@@ -31,6 +32,7 @@ struct Scope : Module {
 	};
 	enum LightIds {
 		LISSAJOUS_LIGHT,
+		LISSAJOUS_BLEND_LIGHT,
 		TRIG_LIGHT,
 		NUM_LIGHTS
 	};
@@ -45,6 +47,7 @@ struct Scope : Module {
 	int channelsY = 0;
 	int bufferIndex = 0;
 	int frameIndex = 0;
+	uint8_t lissajousScheme = 2;
 
 	dsp::SchmittTrigger triggers[16];
 
@@ -61,6 +64,7 @@ struct Scope : Module {
 		const float defaultTime = -std::log2(5e-1f);
 		configParam(TIME_PARAM, maxTime, minTime, defaultTime, "Time", " ms/screen", 1 / 2.f, 1000);
 		configSwitch(LISSAJOUS_PARAM, 0.f, 1.f, 0.f, "Scope mode", {"1 & 2", "1 x 2"});
+		configSwitch(LISSAJOUS_BLEND_PARAM, 0.f, 1.f, 1.f, "Blend mode", {"Light (composite)", "Dark (LERP)"});
 		configParam(THRESH_PARAM, -10.f, 10.f, 0.f, "Trigger threshold", " V");
 		configSwitch(TRIG_PARAM, 0.f, 1.f, 1.f, "Trigger", {"Enabled", "Disabled"});
 
@@ -85,6 +89,8 @@ struct Scope : Module {
 	void process(const ProcessArgs& args) override {
 		bool lissajous = params[LISSAJOUS_PARAM].getValue();
 		lights[LISSAJOUS_LIGHT].setBrightness(lissajous);
+
+		lissajousScheme = params[LISSAJOUS_BLEND_PARAM].getValue() + 1;
 
 		bool trig = !params[TRIG_PARAM].getValue();
 		lights[TRIG_LIGHT].setBrightness(trig);
@@ -183,16 +189,22 @@ struct Scope : Module {
 		return params[LISSAJOUS_PARAM].getValue() > 0.f;
 	}
 
+	json_t* dataToJson() override {
+		json_t* rootJ = json_object();
+		json_object_set_new(rootJ, "blend", json_integer(lissajousScheme));
+		return rootJ;
+	}
+
 	void dataFromJson(json_t* rootJ) override {
 		// In <2.0, lissajous and external were class variables
-		json_t* lissajousJ = json_object_get(rootJ, "lissajous");
-		if (lissajousJ) {
+		if (json_t* lissajousJ = json_object_get(rootJ, "lissajous")) {
 			if (json_integer_value(lissajousJ))
 				params[LISSAJOUS_PARAM].setValue(1.f);
 		}
+		if(json_t* blendJ = json_object_get(rootJ, "blend"))
+			lissajousScheme = json_integer_value(blendJ);
 
-		json_t* externalJ = json_object_get(rootJ, "external");
-		if (externalJ) {
+		if (json_t* externalJ = json_object_get(rootJ, "external")) {
 			if (json_integer_value(externalJ))
 				params[TRIG_PARAM].setValue(1.f);
 		}
@@ -471,7 +483,7 @@ struct ScopeDisplay : LedDisplay {
 			// X x Y
 			int lissajousChannels = std::min(channelsX, channelsY);
 			for (int c = 0; c < lissajousChannels; c++) {
-				nvgStrokeColor(args.vg, SCHEME_YELLOW);
+				nvgStrokeColor(args.vg, blendScheme(&inputXColor, &inputYColor, &module->lissajousScheme)); 
 				drawLissajous(args, c, offsetX, gainX, offsetY, gainY);
 			}
 		}
@@ -504,11 +516,44 @@ struct ScopeDisplay : LedDisplay {
 		drawStats(args, Vec(0, 1), "1", statsX, inputXColor);
 		drawStats(args, Vec(0, box.size.y - 16), "2", statsY, inputYColor);
 	}
+
+	NVGcolor blendScheme(const NVGcolor* c1, const NVGcolor* c2, const uint8_t* scheme) {
+		NVGcolor blend;
+		float r_out, g_out, b_out, a_out;
+
+	    if (*scheme == 1) {
+	    	// Convert alpha values to float (0.0 to 1.0)
+		    const float a1 = c1->a / 255.f;
+		    const float a2 = c2->a / 255.f;
+
+		    // Blend colours using alpha composite
+	   		a_out = a1 + a2 * (1.0 - a1);
+		    r_out = (c1->r * a1 + c2->r * a2 * (1.f - a1)) / a_out;
+		    g_out = (c1->g * a1 + c2->g * a2 * (1.f - a1)) / a_out;
+		    b_out = (c1->b * a1 + c2->b * a2 * (1.f - a1)) / a_out;
+		    blend.a = std::min(a_out * 255.f, 255.f);
+		} else {
+		    // Blend colours using LERP
+		    constexpr float t = 0.5f; // factor
+		    r_out = c1->r * (1.f - t) + c2->r * t;
+	        g_out = c1->g * (1.f - t) + c2->g * t;
+	        b_out = c1->b * (1.f - t) + c2->b * t;
+	        a_out = c1->a * (1.f - t) + c2->a * t;
+	        blend.a = std::min(a_out, 255.f);
+	    }
+
+		blend.r = std::min(r_out, 255.f);
+		blend.g = std::min(g_out, 255.f);
+		blend.b = std::min(b_out, 255.f);
+		return blend;
+	}
 };
 
 
 struct ScopeWidget : ModuleWidget {
-	ScopeWidget(Scope* module) {
+	ParamWidget* blendLight;
+
+	explicit ScopeWidget(Scope* module) {
 		setModule(module);
 		setPanel(createPanel(asset::plugin(pluginInstance, "res/Scope.svg"), asset::plugin(pluginInstance, "res/Scope-dark.svg")));
 
@@ -518,6 +563,9 @@ struct ScopeWidget : ModuleWidget {
 		addChild(createWidget<ThemedScrew>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
 
 		addParam(createLightParamCentered<VCVLightLatch<MediumSimpleLight<WhiteLight>>>(mm2px(Vec(8.643, 80.603)), module, Scope::LISSAJOUS_PARAM, Scope::LISSAJOUS_LIGHT));
+		blendLight = createLightParamCentered<VCVLightLatch<MediumSimpleLight<WhiteLight>>>(mm2px(Vec(15, 80.603)), module, Scope::LISSAJOUS_BLEND_PARAM, Scope::LISSAJOUS_BLEND_LIGHT);
+		addParam(blendLight);
+
 		addParam(createParamCentered<RoundBlackKnob>(mm2px(Vec(24.897, 80.551)), module, Scope::X_SCALE_PARAM));
 		addParam(createParamCentered<RoundBlackKnob>(mm2px(Vec(41.147, 80.551)), module, Scope::Y_SCALE_PARAM));
 		addParam(createLightParamCentered<VCVLightLatch<MediumSimpleLight<WhiteLight>>>(mm2px(Vec(57.397, 80.521)), module, Scope::TRIG_PARAM, Scope::TRIG_LIGHT));
@@ -539,6 +587,39 @@ struct ScopeWidget : ModuleWidget {
 		display->moduleWidget = this;
 		addChild(display);
 	}
+
+	/*void appendContextMenu(Menu *menu) override {
+		Scope *scope = static_cast<Scope*>(module);
+		assert(scope);
+		if (!module || !scope->isLissajous()) return;
+
+		menu->addChild(new MenuSeparator());
+		menu->addChild(createMenuLabel("Lissajous color blend"));
+		menu->addChild(createCheckMenuItem("Light (composite)", "",
+			[=]() {return scope->lissajousScheme == 1;},
+			[=]() {
+				scope->lissajousScheme = 1; 
+				scope->lights[Scope::LISSAJOUS_BLEND_LIGHT].setBrightness(true);
+			}
+		));
+		menu->addChild(createCheckMenuItem("Dark (LERP)", "(default)",
+			[=]() {return scope->lissajousScheme == 2;},
+			[=]() {
+				scope->lissajousScheme = 2;
+				scope->lights[Scope::LISSAJOUS_BLEND_LIGHT].setBrightness(false);
+			}
+		));
+	}*/
+
+	void step() override {
+		Scope *sm = static_cast<Scope*>(module);
+		if (sm && sm->isLissajous()) {
+			blendLight->show();
+      		sm->lights[Scope::LISSAJOUS_BLEND_LIGHT].setBrightness(sm->lissajousScheme == 1 ? 1.f : 0.f);
+		} else blendLight->hide();
+
+		ModuleWidget::step();
+    }
 };
 
 
